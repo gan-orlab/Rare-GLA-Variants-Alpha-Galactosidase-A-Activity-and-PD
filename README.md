@@ -4,6 +4,5 @@
 # Analyses included:
 
 #GWAS and X-chromosome-wide association analyses of alpha-galactosidase A activity
-#Rare-variant analyses of alpha-galactosidase A activity
-#Rare-variant analyses of Parkinson’s disease risk
-#Analysis of previously reported Fabry disease-associated GLA variants
+#Rare-variant and SKAT-O analyses of alpha-galactosidase A activity
+#Rare-variant analyses and SKAT-O of Parkinson’s disease risk
