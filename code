@@ -1,1 +1,229 @@
+# XWAS and GWAS
 
+# To do XWAS
+## To get covar
+Covar file: ~/runs/emsom/projects/Columbia_Biomarkers/softcalls/analyses/normal_status/prgn_covar_2.txt
+
+## GLA activity covar
+GLA phenotype file: ~/runs/emsom/projects/Columbia_Biomarkers/softcalls/phenos_new/GLA_activity.txt
+
+## seperate covar to males and females
+awk 'NR==1 || $5 == 1' covar_Colu_omix_modified.txt > covar_Colu_GLA_activity_males.txt
+
+## Where to get xchr VCF this is not imputed
+~/runs/go_lab/GRCh37/genotyping/NBA/QC_all/QC_script/Genotype_QC_Package_NIH_TOPMed/After_QC/pre_impute_FILTERED_23.vcf.gz
+
+## OK ok where to get Columbia vcf with x chr, confused, so I ended up getting it from here:
+~/runs/go_lab/GRCh37/Columbia/PD_HC/   ## Get the cleaned one I guess, the imputed folder does not have X chr
+
+## The grep chrX or chr23:
+plink2 --bfile Columbia_cleaned --chr X --make-bed --out Columbia_X_chr_clean
+
+## Oh wait there is this folder with chrx, its better to take this one i guess, because its topmed imputed (for hc I think)
+~/runs/go_lab/GRCh37/Columbia/PD_HC/imputed_topmed$
+
+## To impute for soft calls use topmed imputation server, rsq =0.3, population vs Topmed Panel, mode = quality control and imputation
+
+## hard calls, use eric's script
+~/runs/go_lab/scripts/make_plink-files_from_imputed_vcf.sh
+
+## you create raw folder put all data from topmed there. vcf.gz, info, dose. go back to current directory and add cohort name and chr number (make sure the sh bash is in current directory too)
+bash make_plink-files_from_imputed_vcf.sh Columbia X
+
+### Data manipulation on fixing inconsistencies of IDs formats to match bfiles
+### to fix ids pp to Columbia
+sed 's/PP-/Columbia_/g' covar_males_Columbia_GLA_activity.txt > covar_males_Columbia_GLA_activity_fixed.txt
+
+### to give zeros to FID on covar
+awk 'BEGIN{OFS="\t"} NR==1{$1="FID"; print} NR>1{$1="0"; print}' covar_males_Columbia_GLA_activity_fixed.txt > covar_males_Columbia_GLA_activity_fid0.txt
+
+### Now keep covar with bfiles to get bfiles with sex info, and males bfile female bfile
+plink --bfile Columbia_chrX --pheno covar_males_Columbia_GLA_activity_fid0.txt --pheno-name Status --update-sex covar_males_Columbia_GLA_activity_fid0.txt --make-bed --out Columbia_chrX_updated
+
+### Also update the bfiles, by seperating bfiles to males and females
+#### First create male_ids
+awk 'NR>1 && $6==1 {print $1,$2}' covar_males_Columbia_GLA_activity_fid0.txt > male_ids.txt
+
+#### Now use --keep option
+plink --bfile Columbia_chrX_updated --keep male_ids.txt --make-bed --out Columbia_chrX_males
+
+
+# To compute PCs
+## Remove SNPs out of HWE, keep common vars, removes vars with more than 1% missing genotypes
+plink --bfile Columbia_chrX_updated --maf 0.01 --geno 0.01 --hwe 5e-6 --make-bed --out filter_better -exclude range ~/runs/go_lab/scripts/exclusion_regions_hg19.txt --threads 20
+
+## do prunning by Slide a window of 1000 SNPs, Shift the window by 10 SNPs each time, Calculate pairwise LD (r²) within
+## the window, Remove one SNP from each pair with r² > 0.02 (very strict LD threshold)
+plink --bfile filter_better --indep-pairwise 1000 10 0.02 --out pruned_better_and_more --threads 20
+
+## using the pruned list of independent SNPs to make a new bfile
+plink --bfile filter_better --extract pruned_better_and_more.prune.in --make-bed --out input_pca --threads 20
+
+## computes the top 20 (or 5, depends) principal components, use autosome-num 23 to recognise X
+plink --bfile input_pca --pca 5 --out Columbia_NBA --autosome-num 23
+
+## if having OMP issues use:
+export OMP_NUM_THREADS=4
+
+## then compute PCAs with the above code again
+
+## using sed to replace spaces with underscores (_) in the Columbia_NBA.eigenvec file
+sed -i 's/ /_/' Columbia_NBA.eigenvec
+
+## If having issues try
+### Step 1: Convert to proper space-delimited format
+awk '{
+    # Reconstruct the line properly
+    split($1,a,"_");
+    printf "%s %s", a[1], a[2];
+    for (i=3; i<=length(a); i++) printf " %s", a[i];
+    for (i=2; i<=NF; i++) printf " %s", $i;
+    printf "\n";
+}' Columbia_NBA.eigenvec > Columbia_NBA.eigenvec.fixed
+
+### Step 2: Add headers
+sed -i '1i FID IID PC1 PC2 PC3 PC4 PC5' Columbia_NBA.eigenvec.fixed
+
+### Fix the splitting of Columbia IDs while keeping PC values intact
+awk '{
+    if(NR==1) {print; next}
+    fid = $1;
+    iid = $2 "_" $3;  # Recombine Columbia_XXXX
+    printf "%s %s", fid, iid;
+    for(i=4;i<=NF;i++) printf " %s", $i;
+    printf "\n"
+}' Columbia_NBA.eigenvec.fixed > Columbia_NBA.eigenvec.corrected
+
+### Verify
+head Columbia_NBA.eigenvec.corrected
+
+### Get the correct tab delimited
+awk '{$1=$1}1' OFS="\t" Columbia_NBA.eigenvec.corrected > Columbia_NBA.eigenvec.corrected.tab
+
+## Now to you can merge covar with the eigenvec
+### Remember to remove those processing files used to compute PCs
+rm filter*
+rm prune*
+rm input_pca*
+
+### Important to check variance of PCs by checking eigenvals, last PC has least variance,
+### (this helps to determine how many PCs to include)
+
+### Now merge covar with the PCs using excel
+=IFERROR(INDEX($C$2:$C$380, MATCH(O2, $B$2:$B$380, 0)), "")
+
+### here copy and paste covar and eigenvec to one sheet in excel separated by few blank columns
+### and on enter above as next column to covar
+### (by matching IIDs the C column is pc1 and B column is by matching)
+### B and O are the matching IDs
+
+
+# GWAS
+## Set up directories
+mkdir plots
+mkdir linear
+mkdir annos
+mkdir sumstats
+
+## Linear regression
+### create pheno and sex file first
+awk 'BEGIN {OFS="\t"} NR==1 || $9 != "NA" {print $1, $2, $9}' covar_males_Columbia_wPCs.txt > pheno_males_Columbia.txt
+
+awk 'BEGIN {OFS="\t"} NR==1 || $9 != "NA" {print $1, $2, $5}' covar_renamed.txt > sex_males_Columbia.txt
+
+## make bfile have pheno and sex in their fam
+plink --bfile Columbia_chrX_males --pheno pheno_males_Columbia.txt --update-sex sex_males_Columbia.txt --make-bed --out Columbia_male_GLA_activity
+
+## Now we do the regression
+plink --bfile Columbia_male_GLA_activity --pheno pheno_males_Columbia.txt --covar covar_real_Columbia_males_wPC.txt --covar-name Age,PD,PC1,PC2,PC3,PC4,PC5 --hide-covar --linear --ci 0.95 --maf 0.01 --allow-no-sex --out Columbia_male_GLA_activity
+
+### Issues with NAs output - use --allow-no-sex
+### if not working please check formatting in covar, pheno etc.
+### also check if PCs are aligned properly
+
+## Now remove pvalues (column 12) with NAs and sort Pvalues in order
+awk '$12 != "NA"' Columbia_male_GLA_activity.assoc.linear | sort -gk12 > tmpfile && mv tmpfile Columbia_male_GLA_activity.assoc.linear
+
+## Make summary stats and plots
+### For plots
+echo GLA_activity > marker.txt
+
+cp ~/runs/leahc/Columbia_XWAS/Males/hd/hard_calls/linear/Columbia_male_GLA_activity.assoc.linear .
+
+### For sumstats to recognise assoc make sure the assoc_linear results are named assoc
+cp Columbia_male_GLA_activity.assoc.linear assoc
+
+## This is where all the magic happens
+R < Leah_sumstats_from_assoc.R --no-save
+
+## Remember you did above in linear folder, now we move certain outputs to where they belong
+paste lambda.txt >> ../plots/Columbia_lambdas.txt
+
+mv QQ.tiff ../plots/QQ_Columbia_GLA_activity.tiff
+mv ManH.tiff ../plots/ManH_Columbia_GLA_activity.tiff
+mv Metal.tab Metal_Columbia_GLA_activity.txt
+mv COJO.tab COJO_Columbia_GLA_activity.txt
+mv fullSTATS.tab fullSTATS_Columbia_GLA_activity.txt
+
+## Annotating the variants
+### Now go back to the general folder or directories
+
+### Preparing for annotation
+head -n1 sumstats/fullSTATS_Columbia_GLA_activity.txt > header.txt
+
+awk '{print $2,$2,$2,$5,$4}' sumstats/fullSTATS_Columbia_GLA_activity.txt | sed '1d' > input.annovar.txt
+
+### Running ANNOVAR
+perl ~/runs/leahc/AMP_G6PD/annovar/table_annovar.pl input.annovar.txt ~/runs/leahc/AMP_G6PD/annovar/humandb/ -buildver hg38 -out annotatedtable -remove -protocol refGene,ljb26_all,dbnsfp41c,clinvar_20221231 -operation g,f,f,f -nastring .
+
+### Combining Annotations with Summary Stats
+paste sumstats/fullSTATS_Columbia_GLA_activity.txt annotatedtable.hg38_multianno.txt > temp.txt
+
+tr ' ' '\t' < temp.txt > temp2.txt
+
+sort -gk10 temp2.txt > annos/ANNO_Columbia_GLA_activity.txt
+
+
+# OK OK I created summary to create GWAS and XWAS loop once
+## make sure folders for covar, pheno and sex and bfiles are created
+## as below create the following folders
+
+(base) leahc@beluga2:~/scratch/GLA_XWAS$ ll
+
+total 158K
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-26 23:45 annos
+drwxrwxr-x. 6 leahc leahc 25K 2025-05-26 11:30 data
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-27 09:17 plots
+drwxrwxr-x. 2 leahc leahc 33K 2025-05-27 12:06 results
+drwxrwxr-x. 3 leahc leahc 25K 2025-05-29 20:06 scripts
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-27 12:06 sumstats
+
+## also in data folder is where you find the following:
+(base) leahc@beluga2:~/scratch/GLA_XWAS/data$ ll
+
+total 108K
+drwxrwxr-x. 2 leahc leahc 33K 2025-05-27 08:21 bfiles
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-26 16:37 covars
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-27 08:52 phenos
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-27 08:53 sex_files
+
+## In scripts folder is where the script that does the magic
+(base) leahc@beluga2:~/scratch/GLA_XWAS/scripts$ ll
+
+total 203K
+-rw-rw-r--. 1 leahc leahc 1.2K 2025-05-27 12:59 coloured_plot_xwas.R
+-rw-rw-r--. 1 leahc leahc 2.1K 2025-05-27 09:23 Leah_sumstats_from_assoc.R
+-rw-rw-r--. 1 leahc leahc 2.1K 2025-05-27 13:04 Lee_uses_plot_xwas.sh
+drwxrwxr-x. 2 leahc leahc 25K 2025-05-27 09:12 logs
+-rw-rw-r--. 1 leahc leahc 723 2025-05-27 09:43 plot_xwas.R
+-rw-rw-r--. 1 leahc leahc 2.3K 2025-05-26 23:43 run2_xwas.sh
+
+## run using bash:
+## run2_xwas.sh works with Leah_sumstats_from_assoc.R (Just a normal regular GWAS)
+## plot_xwas.sh uses Lee_uses_plot_xwas.sh (more defined on just normal GWAS)
+## Also plot_xwas.sh uses coloured_plot_xwas.R (for coloured plots)
+
+Rscript 2Lee_combined_allchrs_sumstats.R \
+../results/Columbia_PD_combined_PD.assoc.logistic.sorted \
+../results/Columbia_PD_combined_PD.frq \
+../sumstats/Columbia_PD_combined.sumstats.txt
