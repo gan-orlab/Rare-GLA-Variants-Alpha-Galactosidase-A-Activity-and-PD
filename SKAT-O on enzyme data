@@ -1,0 +1,142 @@
+# Columbia-ENZYME_GLA
+## input files: bfiles, covar file and setID on sub rare variants
+```{r}
+## Load libraries
+library(dplyr)
+library(SKAT)
+library(bigsnpr)
+
+## Set the working directory and define file paths
+setwd("~/Desktop/R_things")
+bfile <- "~/Desktop/R_things/GLA_USA_DP30"
+## Load genotype data with bigsnpr
+ snp_readBed(paste0(bfile, ".bed"))
+## Attaching the bigSNP object
+genotype_data <- snp_attach(paste0(bfile, ".rds"))  ## Converting to a matrix
+Z <- as.matrix(genotype_data$genotypes[])  
+
+## Load covariate data
+covariates <- read.table("~/Desktop/R_things/covar_Columbia_GLA_activity.txt", header = TRUE) 
+## Outcome variable
+y <- covariates$Status  
+## other variable/covariates to include
+x1 <- covariates[, c("Age")]
+## Set unknown Sex values to NA
+covariates$Sex[covariates$Sex == 0] <- NA  
+## Ensure Sex is numeric (1 for male, 2 for female)
+covariates$Sex <- as.numeric(covariates$Sex)  # Ensure Sex is numeric (1 for male, 2 for female)
+
+## Load SETID data
+setid_data <- read.table("~/Desktop/R_things/Colu.SETID.txt", header = TRUE, sep = "\t")
+setid_list <- split(setid_data$Variant_ID, setid_data$SET_ID_name)
+
+####### Matching covar and b file ########
+## Extract individual IDs from covariates
+covariate_ids <- covariates$IID  
+## Get sample IDs from the genotype data
+genotype_ids <- genotype_data$fam$sample.ID  
+## Find indices of matching samples
+matching_indices <- match(covariate_ids, genotype_ids)  
+Z <- Z[matching_indices, , drop = FALSE]  # Subset the rows of Z
+
+
+## Print data summaries for verification
+print(head(covariates))
+## Check Z dimensions to verify it matches your individual count and SNP count
+print(dim(Z))  
+## Should match the number of individuals
+print(length(y)) 
+
+## Fit the SKAT null model for the X chromosome with SKAT_Null_Model_ChrX ('C' is for continuous)
+obj.x <- SKAT_Null_Model_ChrX(y ~ Age + Sex, SexVar = "Sex", out_type = "C", data = covariates)
+
+## Extract column names from the genotype data
+snp_ids <- genotype_data$map$marker  # Assuming 'marker' contains the SNP IDs
+colnames(Z) <- snp_ids  # Assign the SNP IDs as column names
+
+
+## Initialize a list to store p-values
+results <- list()
+for (set in names(setid_list)) {
+  snps_in_set <- setid_list[[set]]
+  snp_indices <- match(snps_in_set, colnames(Z))  # Get column indices of SNPs in Z matrix
+  snp_indices <- na.omit(snp_indices)  # Remove NA indices
+  
+  if (length(snp_indices) > 0) {  # Only proceed if there are valid SNP indices
+    Z_subset <- Z[, snp_indices, drop = FALSE]
+    
+    ## Run SKAT with the current SETID
+    p_value <- SKAT_ChrX(Z_subset, obj.x, method = "SKATO")$p.value
+    results[[set]] <- p_value
+  } else {
+    warning(paste("No valid SNP indices found for SETID:", set))
+  }
+}
+
+## Print results
+print(results)
+
+## Create data frame and reset row names
+results_df <- data.frame(Sub_vars = names(results), PValue = unlist(results), row.names = NULL)
+
+## Check structure to ensure it's correct
+print(results_df)
+
+
+skat_result <- SKAT_ChrX(Z, obj.x, kernel = "linear.weighted", is_X.inact =FALSE)
+print(skat_result)
+
+skat_result_burden <- SKAT_ChrX(Z, obj.x, kernel = "linear.weighted", r.corr = 1)
+print(skat_result_burden)
+
+skat_o_result <- SKAT_ChrX(Z, obj.x, kernel = "linear.weighted", method = "SKATO")
+print(skat_o_result)
+
+
+## Assuming 'set_id' is a vector containing the set IDs corresponding to the variants in 'Z'
+skat_o_result <- SKAT_ChrX(Z, obj.x, kernel = "linear.weighted", method = "SKATO", set_id = set_id)
+
+
+## Initialize a list to store results
+results <- list()
+
+## Loop through each set in setid_list
+for (set in names(setid_list)) {
+  snps_in_set <- setid_list[[set]]
+  snp_indices <- match(snps_in_set, colnames(Z))  # Get column indices of SNPs in Z matrix
+  snp_indices <- na.omit(snp_indices)  # Remove NA indices
+  
+  if (length(snp_indices) > 0) {  # Only proceed if there are valid SNP indices
+    Z_subset <- Z[, snp_indices, drop = FALSE]
+    
+    ## Run SKAT
+    skat_result <- SKAT_ChrX(Z_subset, obj.x, kernel = "linear.weighted",is_X.inact =FALSE)
+    ## Run Burden
+    burden_result <- SKAT_ChrX(Z_subset, obj.x, kernel = "linear.weighted", r.corr = 1,is_X.inact =FALSE)
+    ## Run SKAT-O
+    skat_o_result <- SKAT_ChrX(Z_subset, obj.x, kernel = "linear.weighted", method = "SKATO",is_X.inact =FALSE, )
+    
+    ## Store results
+    results[[set]] <- list(
+      SKAT = skat_result$p.value,
+      Burden = burden_result$p.value,
+      SKAT_O = skat_o_result$p.value
+    )
+  } else {
+    warning(paste("No valid SNP indices found for SETID:", set))
+  }
+}
+
+## Convert nested list of SKAT results to a data frame
+results_df <- do.call(rbind, lapply(names(results), function(set) {
+  data.frame(
+    SetID = set,
+    SKAT = results[[set]]$SKAT,
+    Burden = results[[set]]$Burden,
+    SKAT_O = results[[set]]$SKAT_O
+  )
+}))
+
+## Print the results table
+print(results)
+print(results_df)
