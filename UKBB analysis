@@ -1,0 +1,115 @@
+# UKBB analysis
+
+### Step 1: do tabix for UKBB files
+module load nixpkgs/16.09
+module load intel/2018.3
+module load tabix/0.2.6
+
+tabix -f -p vcf ukb23156_cX_b23_v1.vcf.gz
+
+
+# Step 2: filter UKBB VCF using GQ and DP and remove multiallelic sites
+
+## To get GQ20 DP30 from ukb23156_cX_b23_v1.vcf.gz using bcftools
+bcftools filter -i 'GQ >= 20 & DP >= 30' ukb23156_cX_b23_v1.vcf.gz -Oz -o UKBB_GQ_DP.vcf.gz
+
+### Optional missingness filter
+# bcftools view -i 'F_MISSING<0.05' UKBB_GQ_DP.vcf.gz -Oz -o UKBB_GQ_DP_missing_filtered.vcf.gz
+
+## Remove multiallelic sites
+vcftools --gzvcf UKBB_GQ_DP.vcf.gz \
+--max-alleles 2 \
+--min-alleles 2 \
+--recode \
+--stdout | gzip -c > UKBB_GQ20_DP30_MISS_filtered_2alleles_vcf.gz
+
+
+### Convert to PLINK b-files
+plink --vcf UKBB_GQ20_DP30_MISS_filtered_2alleles_vcf.gz \
+--vcf-half-call m \
+--make-bed \
+--out UKBB_GQ20_DP30_MISS_filtered_2alleles_after_GATK
+
+
+### Export all variants to VCF
+plink2 --bfile UKBB_GQ20_DP30_MISS_filtered_2alleles_after_GATK \
+--out all_rare_ukbb \
+--export vcf bgz id-paste=fid
+
+
+### OR extract your specified GLA region directly
+
+plink --bfile UKBB_GQ20_DP30_MISS_filtered_2alleles_after_GATK \
+--chr X \
+--from-bp ----- \
+--to-bp ----- \
+--make-bed \
+--out UKBB_GLA_part
+
+
+### Convert VCF to ANNOVAR format
+
+perl ~/runs/leahc/AMP_GLA/annovar/convert2annovar.pl \
+--format vcf4 \
+UKBB_GLA_part.vcf.gz \
+--allsample \
+--withfreq \
+--outfile UKBB_GLA_recode_convert
+
+
+### Annotate all SNPs
+
+perl ~/runs/leahc/AMP_GLA/annovar/table_annovar.pl \
+UKBB_GLA_recode_convert \
+~/runs/leahc/AMP/annovar/humandb/ \
+--buildver hg38 \
+--out UKBB_GLA_recode_convert_annovar \
+--remove \
+--protocol refGene,ljb26_all,dbnsfp41c \
+--operation g,f,f \
+--nastring .
+
+
+### CADD variants
+awk -F '\t' 'NR>1 && $31>20 {print $1" "$2" "$3" "$7}' \
+UKBB_GLA_recode_convert_annovar.hg38_multianno.txt > UKBB_GLA_CADD.txt
+
+
+### NS
+awk -F '\t' '$9 ~ /nonsyn/ {print $1" "$2" "$3" "$7}' \
+UKBB_GLA_recode_convert_annovar.hg38_multianno.txt > UKBB_GLA_nonsyn.txt
+
+
+### LOF
+awk -F '\t' '$9 ~ /stop|frame/ || $6 ~ /splicing/ {print $1" "$2" "$3" "$7}' \
+UKBB_GLA_recode_convert_annovar.hg38_multianno.txt > UKBB_GLA_LOF.txt
+
+
+### Functional
+awk -F '\t' '$9 ~ /nonsyn|stop|frame/ || $6 ~ /splicing/ {print $1, $2, $3, $7}' \
+UKBB_GLA_recode_convert_annovar.hg38_multianno.txt > UKBB_GLA_functional.txt
+
+
+### Prepare for rare-variant tests
+
+## Extract variants from annotated results for CADD
+plink2 --bfile UKBB_GQ20_DP30_MISS_filtered_2alleles_after_GATK \
+--extract range UKBB_GLA_CADD.txt \
+--export vcf bgz id-paste=fid \
+--out UKBB_GLA_CADD_final
+
+
+### Run tabix again
+tabix -f -p vcf UKBB_GLA_CADD_final.vcf.gz
+
+
+### To extract GLA variants from the relevant VCF
+bcftools view -i 'ID="GLA"' \
+-Oz \
+-o UKBB_GLA_nonsyn.vcf.gz \
+UKBB_GLA_nonsyn_final.vcf.gz
+
+
+### To get GLA.txt hg38 format
+gunzip refFlat.txt.gz
+grep GLA refFlat.txt > GLA.txt
