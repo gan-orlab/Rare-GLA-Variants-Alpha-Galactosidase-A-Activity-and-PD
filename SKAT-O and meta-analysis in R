@@ -1,0 +1,124 @@
+## SKATO (and meta-analysis) only!
+```{r}
+## MetaSKAT for BINARY trait
+
+
+suppressPackageStartupMessages({
+  library(SKAT)
+  library(MetaSKAT)
+})
+
+## Working directory
+workdir <- "/lustre07/scratch/leahc/UKBB_withproxy/PGK1/GLA"
+setwd(workdir)
+
+## Output file (meta SKAT-O only) 
+File.Meta.SKATO <- "Females_META.results.skato.txt"
+
+## Cohorts
+cohorts <- c("FRENCH_females", "USA_females", "Israel_females","RUSSIA_females","AMPPD_females","females_UKBB")
+
+File.Mat.vec     <- rep("", length(cohorts))
+File.SetInfo.vec <- rep("", length(cohorts))
+
+## if error
+stop_if_missing <- function(files, cohort) {
+  missing <- files[!file.exists(files)]
+  if (length(missing)) {
+    stop(
+      paste0(
+        "ERROR: Missing files for cohort ", cohort, ":\n",
+        paste(missing, collapse = "\n")
+      )
+    )
+  }
+}
+
+## STEP 1: per-cohort analysis
+for (i in seq_along(cohorts)) {
+  cohort <- cohorts[i]
+
+  message("Processing cohort: ", cohort)
+
+
+  File.Bed     <- paste0(cohort, "_GLA_rare.bed")
+  File.Bim     <- paste0(cohort, "_GLA_rare.bim")
+  File.Fam     <- paste0(cohort, "_GLA_rare.fam")
+  File.SetID   <- paste0(cohort, "_GLA_SETID.txt")
+
+  File.SSD     <- paste0(cohort, ".SSD")
+  File.Info    <- paste0(cohort, ".info")
+
+  File.Mat     <- paste0(cohort, ".mat")
+  File.SetInfo <- paste0(cohort, ".MInfo")
+
+  File.Cov     <- paste0("covar_", cohort, ".txt")
+
+  File.Results.SKATO <- paste0(cohort, "_results.skato.txt")
+
+  required_files <- c(File.Bed, File.Bim, File.Fam, File.SetID, File.Cov)
+  stop_if_missing(required_files, cohort)
+
+  ## Build SSD if needed
+  if (!file.exists(File.SSD) || !file.exists(File.Info)) {
+    message("Creating SSD/Info: ", File.SSD, " + ", File.Info)
+    Generate_SSD_SetID(File.Bed, File.Bim, File.Fam, File.SetID, File.SSD, File.Info)
+  } else {
+    message("SSD/Info already exist, skipping creation.")
+  }
+
+  SSD.INFO <- Open_SSD(File.SSD, File.Info)
+
+  ## Read phenotype/covariates
+  FAM <- Read_Plink_FAM_Cov(File.Fam, File.Cov, Is.binary = TRUE, cov_header = TRUE)
+
+  y <- FAM$Status
+  if (all(na.omit(unique(y)) %in% c(1,2))) y <- y - 1
+
+  Age <- FAM$Age
+  Sex <- NULL
+  if ("Sex.y" %in% names(FAM)) Sex <- FAM$Sex.y
+  if ("Sex"   %in% names(FAM)) Sex <- FAM$Sex
+
+  if (!is.null(Sex) && length(unique(na.omit(Sex))) > 1) {
+    obj <- SKAT_Null_Model(y ~ Age + Sex, out_type = "D")
+  } else {
+    obj <- SKAT_Null_Model(y ~ Age, out_type = "D")
+  }
+
+  ## SKAT-O only 
+  out.skato <- SKAT.SSD.All(SSD.INFO, obj, method = "optimal.adj")
+  write.table(out.skato$results, file = File.Results.SKATO,
+              quote = FALSE, row.names = FALSE)
+
+  ## Meta files
+  N.Sample <- length(y)
+  Generate_Meta_Files(obj, File.Bed, File.Bim, File.SetID,
+                      File.Mat, File.SetInfo, N.Sample)
+
+  File.Mat.vec[i]     <- File.Mat
+  File.SetInfo.vec[i] <- File.SetInfo
+
+  Close_SSD()
+  message("Done cohort: ", cohort)
+}
+
+## STEP 2: Meta-analysis (SKAT-O only) 
+stop_if_missing(File.Mat.vec,     "META (.mat)")
+stop_if_missing(File.SetInfo.vec, "META (.MInfo)")
+
+
+# Running META SKAT-O
+
+Cohort.Info <- Open_MSSD_File_2Read(File.Mat.vec, File.SetInfo.vec)
+
+meta.skato <- MetaSKAT_MSSD_ALL(Cohort.Info, method = "optimal")
+
+write.table(meta.skato,
+            file = File.Meta.SKATO,
+            quote = FALSE, row.names = FALSE)
+
+message("\nMeta-analysis completed!")
+message("Wrote: ", File.Meta.SKATO)
+
+```
