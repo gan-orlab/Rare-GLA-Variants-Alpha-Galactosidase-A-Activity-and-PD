@@ -1,5 +1,5 @@
 # Rare-GLA-Variants-Alpha-Galactosidase-A-Activity-and-PD
-#This study investigated the relationship between GLA genetic variation, alpha-galactosidase A activity, and Parkinson’s disease (PD) risk.
+#In this study, we examined the contribution of rare GLA variants to Parkinson's disease  (PD) risk across six independent cohorts comprising 10,011 cases, 16,352 proxy-cases, and 387,955 controls. We additionally performed GWAS and X-chromosome–wide analyses of GLA enzymatic activity in 930 participants, followed by sex-stratified rare-variant burden testing using SKAT-O on GLA enzyme activity and PD
 
 # Analyses included:
 
