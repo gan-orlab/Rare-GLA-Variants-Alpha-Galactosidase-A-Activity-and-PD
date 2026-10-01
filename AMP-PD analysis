@@ -1,0 +1,49 @@
+# AMP-PD analysis
+
+plink --bfile chrX_FILTERED --chr X --from-bp ----- --to-bp ----- --make-bed --out GLA_part
+
+### convert bfiles to vcf
+plink2 --bfile GLA_part --recode vcf --out GLA_part
+
+### convert the vcf to match ANNOVAR avinput for vcf
+perl ~/runs/leahc/AMP_GLA/annovar/convert2annovar.pl --format vcf4 GLA_part.vcf --allsample --withfreq --out GLA_avinput
+
+### Download humandb
+perl ~/runs/senkkon/ANNOVAR/annovar/annotate_variation.pl -buildver hg38 -downdb -webfrom annovar clinvar_20221231 ~/runs/senkkon/ANNOVAR/annovar/humandb/
+
+### Annotation
+perl ~/runs/leahc/AMP_GLA/annovar/table_annovar.pl GLA_avinput ~/runs/leahc/AMP/annovar/humandb/ --buildver hg38 --out GLAanno --remove --protocol refGene,ljb26_all,dbnsfp41c,clinvar_20221231 --operation g,f,f,f --nastring .
+
+
+### CADD coding script using the ANNOVAR text output file "GLAanno"
+awk -F '\t' 'NR>1 && $31>20 {print $1" "$2" "$3" "$7}' GLAanno.hg38_multianno.txt > GLA_CADD.txt
+
+### NS
+awk -F '\t' '$9 ~ /nonsyn/ {print $1" "$2" "$3" "$7}' GLAanno.hg38_multianno.txt > AMP_GLA_nonsyn.txt
+
+### LOF
+awk -F '\t' '$9 ~ /stop|frame/ || $6 ~ /splicing/ {print $1" "$2" "$3" "$7}' GLAanno.hg38_multianno.txt > AMP_GLA_LOF.txt
+
+### Functional
+awk -F '\t' '$9 ~ /nonsyn|stop|frame/ || $6 ~ /splicing/ {print $1, $2, $3, $7}' GLAanno.hg38_multianno.txt > AMP_GLA_functional.txt
+
+
+### Extract variants from annotated results
+### This matches the selected GLA variants to the GLA bfile
+
+plink2 --bfile GLA_part --extract range GLA_CADD.txt --export vcf bgz id-paste=fid --out AMP_PD_GLA_CADD_final
+
+
+### Run TABIX
+
+# run tabix for all files
+module load nixpkgs/16.09
+module load intel/2018.3
+module load tabix/0.2.6
+
+tabix -f -p vcf AMP_PD_GLA_CADD_final.vcf.gz
+
+
+### To get GLA.txt hg38 format
+gunzip refFlat.txt.gz
+grep GLA refFlat.txt > GLA.txt
